@@ -136,7 +136,9 @@ pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json
   agents (`.pi/agents`) are not consulted in v1.
 - `--task-file`: the brief. `-` reads stdin. The contents become pi's prompt
   argument, prefixed `Task: `, as in both pi extensions. An empty brief is
-  rejected.
+  rejected. A brief above 100000 bytes is refused before spawn, because pi
+  receives it as one argument and Linux caps a single argument at 128 KiB;
+  long material belongs in files the brief references by path.
 - `--cwd`: the child's working directory for a new conversation; default is the
   current directory. On resume the session header's cwd is used, and a
   difference from the current directory is reported in the header.
@@ -216,7 +218,7 @@ run: new
 model: openai-codex/gpt-6-astra
 thinking: high
 cwd: /srv/code/predator
-usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 91% ctx 62k $0.42
+usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 71% ctx 62k $0.42
 
 <final assistant text>
 ```
@@ -230,8 +232,10 @@ usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 91% ctx 62k $0.42
   decimal plus `k`, below 1M rounded `k`, else one decimal plus `M`. Cache ratio
   is `cacheRead / (input + cacheRead)` as a percentage; cost to two decimals.
 - `--json` emits `{ id, status, run, model, thinking, cwd, requestedModel,
+  modelMismatch, cwdNote,
   usage: { turns, input, output, cacheRead, cacheWrite, contextTokens, cost },
-  text, stderr }` with raw numbers.
+  text, stderr }` with raw numbers; `modelMismatch` and `cwdNote` are the
+  text of the corresponding header lines or `null`.
 
 ### Exit codes
 
@@ -345,6 +349,16 @@ the table sits above opus and astra.
   name it as the fallback when pi is unavailable.
 - `~/.pi/agent/settings.json`: drop the `pi-subagent` package entry. Role files
   under `~/.pi/agent/agents` stay, including `implementer.md` for ad-hoc use.
+- Delete the chezmoi templates that publish `/skill:review-plan` and
+  `/skill:execute-plan` into `~/.pi/agent/skills`
+  (`dot_pi/agent/skills/symlink_review-plan.tmpl`,
+  `symlink_execute-plan.tmpl`). Pi children do not need the workflow skills;
+  the rubric reaches them by absolute path in the brief. The
+  `sandbox-troubleshooting` symlink stays.
+- The chezmoi `README.md` sections "Workflow startup and verification" and
+  "Probe commands" are rewritten for the Claude-only route: Claude Code starts
+  at the task root, pi rows go through the plugin, the three Pi probes are
+  replaced by one plugin probe, the Claude probe stays.
 
 ### Predator (`/srv/code/predator`)
 
@@ -356,8 +370,15 @@ the table sits above opus and astra.
   the `/skill:review-plan` mention.
 - `.pi/settings.json` stays: pi children still load the repository's skills
   and prompts.
+- `docs/references/agent-harnesses.md` (a Reference, linked from the
+  references index) is rewritten to describe Claude Code as the only
+  controller and pi as a subagent runtime reached through the plugin, with
+  the Pi controller route named as retired on 2026-10-03. Its frontmatter
+  description changes, so the generated indexes are regenerated per the
+  `writing-docs` skill.
 
-Records under `docs/records/` are not edited.
+Records under `docs/records/`, dated specs under `docs/superpowers/specs/`
+and issue `#0171` are history and are not edited.
 
 ## 9. Phasing
 
