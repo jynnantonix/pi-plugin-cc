@@ -24,8 +24,10 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" resume --id <public-id> --t
 ```
 
 - `start` creates a new conversation. The role's `model` is the default; `--model` and `--thinking`
-  override it for this conversation. A model must be spelled `provider/id`; a bare name is refused,
-  because pi would fuzzy-match it and the mismatch check below could not tell.
+  override it for this conversation. A model must be spelled `provider/id`, with the exact id as
+  `pi --list-models` prints it and no `:thinking` suffix. A bare name or a suffix is refused, because
+  pi would fuzzy-match it and the mismatch check below could not tell. Pi still matches a partial
+  id by substring, so a partial id produces a `model-mismatch` line rather than a refusal.
 - `resume` continues a conversation. It takes the ID and a task file and nothing else. The session
   restores model, thinking level and history; the role file supplies the prompt and tools again.
 - `--approve` grants pi project trust for this run only. Use it only on a checkout whose trust has
@@ -58,14 +60,25 @@ usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 71% ctx 62k $0.42
 - After every run, repeat `id`, `status`, `model` and `usage` to the user. Bash output is collapsed
   in their view.
 
-Exit codes: `0` completed; `1` the run failed (header present); `2` refused before spawn, with the
-reason on stderr and no header. A refusal changes nothing on disk.
+Exit codes: `0` completed; `1` the run failed (header present when pi ran; an internal failure such
+as an unwritable temp directory exits `1` with only a stderr line); `2` refused before spawn, with
+the reason on stderr and no header. A refusal changes nothing on disk.
 
 ## Rules
 
-- One run per ID at a time. A second run on a busy ID is refused with `busy (pid N)`.
+- One run per ID at a time. A second run on a busy ID is refused with `busy (pid N; lock <path>)`.
+  `N` is the pi process. After a cancel that killed this script with SIGKILL, pi may still be
+  finishing; the ID stays busy until it exits. If `N` is dead and the message persists, the PID was
+  reused; remove the named lock file by hand.
 - Different IDs run in parallel freely. Start as many background runs as the work needs.
+- A pi child cannot start another subagent: the script refuses to run when `PI_SUBAGENT=1` is in
+  its environment, which every child inherits.
+- A cancel (SIGTERM or SIGINT to the script) forwards SIGTERM to pi, SIGKILL after five seconds,
+  releases the lock and reports `error: aborted (SIGTERM)`. Whatever pi persisted stays resumable.
 - Never pass `--agent`, `--cwd`, `--model` or `--thinking` to `resume`.
 - The brief is one argument to pi and is limited to 100000 bytes. Reference long material by path.
 - Conversations live under `<agent-dir>/claude-subagent-sessions/<id>/session.jsonl`. Open one in
   pi's own interface with `pi --session <that path>`, or export it with `pi --export <that path>`.
+  A `start` whose pi never wrote a session file leaves no directory behind.
+- If `pi` on `PATH` is a shell shim rather than the npm symlink, set `PI_SUBAGENT_PACKAGE` to the
+  `@earendil-works/pi-coding-agent` directory so the script can import pi's frontmatter parser.

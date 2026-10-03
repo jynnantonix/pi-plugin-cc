@@ -13,8 +13,9 @@ example shipped with `@earendil-works/pi-coding-agent`, with persistence and loc
 - Node.js 22.18 or later.
 - `pi` on `PATH` (tested with `@earendil-works/pi-coding-agent` 1.0.0), with credentials and agent
   files already configured under `~/.pi/agent`. The script imports pi's own frontmatter parser from
-  the package behind that binary, so `pi` must resolve to `<package>/dist/bundle/cli.js` as the npm
-  global install lays it out; a shell shim in front of it is not supported.
+  the package behind that binary, which it finds by following `pi` to `<package>/dist/bundle/cli.js`
+  as the npm global install lays it out. If `pi` is a shell shim (mise, asdf, volta), set
+  `PI_SUBAGENT_PACKAGE` to the `@earendil-works/pi-coding-agent` directory instead.
 
 ## Install
 
@@ -60,4 +61,7 @@ Pass when the second answer refers to the first, and pi's interface shows both t
   lock.reclaim    present only for the instant a stale lock is being removed
 ```
 
-Nothing is deleted automatically. A lock whose process is dead is reclaimed by the next run.
+Conversations are never deleted automatically; the one exception is a `start` whose pi exited
+before writing any session file, whose empty directory is removed. A lock whose process is dead is
+reclaimed by the next run. Children run with `PI_SUBAGENT=1` and the script refuses to start when
+it sees that variable, so a pi child cannot start grandchildren.

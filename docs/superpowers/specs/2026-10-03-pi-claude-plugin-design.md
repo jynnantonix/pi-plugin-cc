@@ -95,7 +95,9 @@ Two components:
    `"."` export is `dist/index.js`) and imports `parseFrontmatter`,
    `getAgentDir` and `CONFIG_DIR_NAME` from it, as the example does. This keeps
    the library version equal to the binary it spawns. `PI_SUBAGENT_PI` overrides
-   the binary path for tests.
+   the binary path for tests; `PI_SUBAGENT_PACKAGE` names the package
+   directory directly when `pi` on PATH is a shell shim whose realpath does
+   not lead to the package (amended 2026-10-03 after the final review).
 2. **Skill** `skills/pi-subagent/SKILL.md`: the only place the controller learns
    the contract. Section 6 lists its content.
 
@@ -115,7 +117,11 @@ spawns `pi`. `Bash` is used because it is the Claude Code tool that offers
 Rejected alternatives: a thin Claude forwarding agent as in the codex plugin
 (an extra model hop with nothing gained, since background runs through `Bash`,
 not `Agent`); an MCP server (a tool call blocks the controller for the whole
-run); building on the function-hooks module API (early access).
+run); building on the function-hooks module API (early access); passing the
+brief on pi's stdin instead of as one argument (it would lift the 100000-byte
+cap and keep the brief out of `/proc/<pid>/cmdline`, but changes the argv
+contract the tests pin; noted 2026-10-03 at the final review as a candidate
+for a later revision, not taken now).
 
 ## 4. Runtime contract
 
@@ -143,10 +149,16 @@ pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json
   current directory. On resume the session header's cwd is used, and a
   difference from the current directory is reported in the header.
 - `--model`, `--thinking`: forwarded verbatim to pi's flags of the same name.
-  A model must be spelled `provider/id`; a bare name (from the flag or from
-  the role file when no flag is given) is refused before spawn, because pi
-  fuzzy-matches bare names and the mismatch check could not tell a fallback
-  from a match (amended 2026-10-03 after task review).
+  A model must be spelled `provider/id` with no `:thinking` suffix; a bare
+  name or a suffixed one (from the flag or from the role file when no flag
+  is given) is refused before spawn, because pi fuzzy-matches bare names and
+  the mismatch check could not tell a fallback from a match (amended
+  2026-10-03 after task and final review). Pi still substring-matches a
+  partial id after the provider, so a partial id yields a `model-mismatch`
+  line, which is the safe direction. Known limit: on resume the restored
+  model is read as the file-latest `model_change`, while pi restores the
+  branch-latest; after a branch switch in pi's TUI the header can show a
+  false mismatch.
   With no `--model`, the role's `model` is forwarded if present; otherwise pi's
   default applies. Both are rejected on `resume`.
 - `--approve`: forwards pi's one-time trust override. Default is no flag.
@@ -172,7 +184,9 @@ Storage root: `<agent-dir>/claude-subagent-sessions/`, overridable by
 
 Nothing else: no snapshot, no index, no result or event files. Directories are
 created `0700`. The root is distinct from `pi-subagent`'s `subagent-sessions`
-so the two layouts are never confused.
+so the two layouts are never confused. A new conversation whose pi exited
+without writing a session file leaves no directory behind; otherwise nothing
+is deleted automatically.
 
 ### Lock
 
@@ -204,8 +218,11 @@ pi --mode json -p
 ```
 
 - cwd is `--cwd` (new) or the session header's cwd (resume).
-- Environment is the parent's plus `PI_SUBAGENT=1`, so the child's installed
-  `subagent` extension stays unregistered and children cannot nest.
+- Environment is the parent's plus `PI_SUBAGENT=1`. The script itself refuses
+  to run (exit 2) when that variable is set, so a pi child cannot start
+  grandchildren through this plugin; pi does not read the variable, and
+  extensions that honour it (the retired `pi-subagent` did) are a bonus, not
+  the mechanism (amended 2026-10-03 after the final review).
 - The prompt temp file is mode `0600` and removed after exit.
 - stdin is ignored; stdout is consumed as a JSONL stream split on LF with a UTF-8
   decoder, never Node `readline`; stderr is captured.
