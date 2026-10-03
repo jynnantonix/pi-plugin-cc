@@ -31,3 +31,49 @@ export function runScript(args, { cwd, env = {}, input } = {}) {
     env: { ...process.env, ...env },
   });
 }
+
+/** A pi --mode json run as JSONL text. Shapes follow docs/json.md and a recorded 1.0.0 session. */
+export function streamLines({
+  text = "done",
+  provider = "openai-codex",
+  model = "gpt-6-astra",
+  stopReason = "stop",
+  errorMessage,
+  usage = {},
+  settled = true,
+  thinkingLevel = "high",
+  cwd = "/tmp",
+} = {}) {
+  const u = {
+    input: 1000,
+    output: 200,
+    cacheRead: 9000,
+    cacheWrite: 100,
+    totalTokens: 12000,
+    cost: { total: 0.1234 },
+    ...usage,
+  };
+  const assistant = {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    provider,
+    model,
+    thinkingLevel,
+    usage: u,
+    stopReason,
+    ...(errorMessage ? { errorMessage } : {}),
+    timestamp: 1791022400000,
+  };
+  const events = [
+    { type: "session", version: 3, id: "fixture", timestamp: "2026-10-03T00:00:00.000Z", cwd },
+    { type: "agent_start" },
+    { type: "turn_start" },
+    { type: "message_end", message: { role: "user", content: "Task: x", timestamp: 1791022399000 } },
+    { type: "message_update", usage: u, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text } },
+    { type: "message_end", message: assistant },
+    { type: "turn_end", message: assistant, toolResults: [] },
+    { type: "agent_end", messages: [assistant], willRetry: false },
+  ];
+  if (settled) events.push({ type: "agent_settled" });
+  return `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+}
