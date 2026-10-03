@@ -143,6 +143,10 @@ pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json
   current directory. On resume the session header's cwd is used, and a
   difference from the current directory is reported in the header.
 - `--model`, `--thinking`: forwarded verbatim to pi's flags of the same name.
+  A model must be spelled `provider/id`; a bare name (from the flag or from
+  the role file when no flag is given) is refused before spawn, because pi
+  fuzzy-matches bare names and the mismatch check could not tell a fallback
+  from a match (amended 2026-10-03 after task review).
   With no `--model`, the role's `model` is forwarded if present; otherwise pi's
   default applies. Both are rejected on `resume`.
 - `--approve`: forwards pi's one-time trust override. Default is no flag.
@@ -163,6 +167,7 @@ Storage root: `<agent-dir>/claude-subagent-sessions/`, overridable by
 <root>/<public-id>/
   session.jsonl     pi's native history, passed as --session
   lock              present only while a child runs; holds the child PID
+  lock.reclaim      present only for the instant a stale lock is removed
 ```
 
 Nothing else: no snapshot, no index, no result or event files. Directories are
@@ -171,10 +176,18 @@ so the two layouts are never confused.
 
 ### Lock
 
-`lock` is created with the `wx` flag (atomic create) and holds the PID of the
-pi child once known. A live PID refuses the run with
-`status: error: busy (pid <n>)`. A dead PID is treated as stale: the file is
-removed and the run proceeds. The lock is per conversation; independent
+`lock` holds the PID of the pi child once known. It is created with its
+content already in place (written to a private temp file, then `link`ed into
+place, which fails atomically with `EEXIST`) and updated by writing a temp
+file and `rename`ing it over the lock, so a reader never sees an empty lock. A
+live PID refuses the run with `status: error: busy (pid <n>)`. A dead PID is
+stale. Stale locks are removed under a short-lived `lock.reclaim` mutex made
+with the same primitive: only the mutex holder re-inspects `lock` and unlinks
+it if still stale, so no live lock is ever moved or deleted; a mutex left by
+a dead reclaimer is itself stale. Empty or unparseable content is in flight
+until it is 10 s old, then stale. (Amended 2026-10-03 after task review: the
+original `wx`-then-write design had a window in which a concurrent acquirer
+read an empty lock as stale.) The lock is per conversation; independent
 conversations run in parallel without coordination. The plugin imposes no
 concurrency cap; the controller decides how many children to run.
 
