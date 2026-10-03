@@ -89,13 +89,13 @@ export function reclaim(dir, path) {
   const mutex = reclaimMutexPath(dir);
   if (!tryCreate(dir, mutex, process.pid)) {
     const holder = inspect(mutex);
-    if (holder && !isStale(holder)) throw new UsageError("busy (lock contention)");
+    if (holder && !isStale(holder)) throw new UsageError(`busy (lock contention; ${path})`);
     try {
       unlinkSync(mutex);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    if (!tryCreate(dir, mutex, process.pid)) throw new UsageError("busy (lock contention)");
+    if (!tryCreate(dir, mutex, process.pid)) throw new UsageError(`busy (lock contention; ${path})`);
   }
   try {
     const owner = inspect(path);
@@ -124,6 +124,7 @@ export function acquireLock(dir, pid = process.pid) {
   const path = lockPath(dir);
   for (let attempt = 0; attempt < 3; attempt++) {
     if (tryCreate(dir, path, pid)) {
+      let owner = pid; // the PID this holder last wrote; release() leaves any other owner's lock alone
       return {
         path,
         update(newPid) {
@@ -138,12 +139,16 @@ export function acquireLock(dir, pid = process.pid) {
             }
             throw error;
           }
+          owner = newPid;
         },
         release() {
+          // Once our child dies, a contender may reclaim the lock and write its own PID before we get here:
+          // unlink only a lock that still names our owner. Never throws (it runs in `finally`): a lock left
+          // behind names a PID that dies with us, so the next acquirer reclaims it as stale.
           try {
-            unlinkSync(path);
+            if (Number.parseInt(readFileSync(path, "utf8"), 10) === owner) unlinkSync(path);
           } catch {
-            // already released
+            // already released (ENOENT), or left for stale reclaim
           }
         },
       };
@@ -152,10 +157,12 @@ export function acquireLock(dir, pid = process.pid) {
     if (!owner) continue; // vanished between create and inspect; try again
     if (!isStale(owner)) {
       throw new UsageError(
-        Number.isInteger(owner.pid) && owner.pid > 0 ? `busy (pid ${owner.pid})` : "busy (lock contention)",
+        Number.isInteger(owner.pid) && owner.pid > 0
+          ? `busy (pid ${owner.pid}; lock ${path})`
+          : `busy (lock contention; ${path})`,
       );
     }
     reclaim(dir, path);
   }
-  throw new UsageError("busy (lock contention)");
+  throw new UsageError(`busy (lock contention; ${path})`);
 }

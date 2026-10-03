@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
-import { FAKE_PI, SCRIPT, runScript, streamLines, tempDir, writeAgent } from "./helpers.mjs";
+import { FAKE_PI, SCRIPT, childEnv, runScript, streamLines, tempDir, writeAgent } from "./helpers.mjs";
 
 function setup() {
   const base = tempDir();
@@ -79,6 +79,21 @@ test("start launches pi with the spec's argv, persists a session and cleans up",
   assert.deepEqual(readdirSync(dir), ["session.jsonl"], "no lock after exit");
   assert.equal(JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0]).type, "session");
 
+  const tuned = runScript(
+    ["start", "--agent", "reviewer", "--task-file", t.brief, "--cwd", t.work, "--thinking", "low", "--approve"],
+    { cwd: t.base, env: t.env },
+  );
+  assert.equal(tuned.status, 0, tuned.stderr);
+  const tunedArgv = t.argv().argv;
+  assert.deepEqual(tunedArgv.slice(9), [
+    "--model",
+    "openai-codex/gpt-6-astra",
+    "--thinking",
+    "low",
+    "--approve",
+    "Task: Review the change.\n",
+  ]);
+
   // A relative root resolves against this process's cwd, not pi's --cwd, so the session survives.
   const relative = runScript(["start", "--agent", "reviewer", "--task-file", t.brief, "--cwd", t.work], {
     cwd: t.base,
@@ -136,7 +151,12 @@ test("resume reuses the session, re-passes the role, and refuses overrides and u
   writeFileSync(join(t.root, id, "lock"), `${process.pid}\n`);
   const busy = runScript(["resume", "--id", id, "--task-file", t.brief], { cwd: t.base, env: t.env });
   assert.equal(busy.status, 2);
-  assert.match(busy.stderr, new RegExp(`busy \\(pid ${process.pid}\\)`));
+  assert.match(busy.stderr, new RegExp(`busy \\(pid ${process.pid}; lock ${join(t.root, id, "lock")}\\)`));
+
+  unlinkSync(join(t.agentDir, "agents", "reviewer.md"));
+  const roleless = runScript(["resume", "--id", id, "--task-file", t.brief], { cwd: t.base, env: t.env });
+  assert.equal(roleless.status, 2);
+  assert.match(roleless.stderr, /unknown agent "reviewer"/);
 });
 
 test("failures: non-zero exit keeps partial text, mismatch is reported, no-session dirs are removed", () => {
@@ -220,6 +240,22 @@ test("refusals happen before any file is written", () => {
   });
   assert.equal(bare.status, 2);
   assert.match(bare.stderr, /provider\/id/);
+  const suffixed = runScript(
+    ["start", "--agent", "reviewer", "--task-file", t.brief, "--model", "openai-codex/gpt-6-astra:high"],
+    { cwd: t.work, env: t.env },
+  );
+  assert.equal(suffixed.status, 2);
+  assert.match(suffixed.stderr, /--thinking/);
+  writeAgent(t.agentDir, "bare", { frontmatter: "name: bare\ndescription: x\nmodel: sonnet\n" });
+  const bareRole = runScript(["start", "--agent", "bare", "--task-file", t.brief], { cwd: t.work, env: t.env });
+  assert.equal(bareRole.status, 2);
+  assert.match(bareRole.stderr, /provider\/id/);
+  const nested = runScript(["start", "--agent", "reviewer", "--task-file", t.brief], {
+    cwd: t.work,
+    env: { ...t.env, PI_SUBAGENT: "1" },
+  });
+  assert.equal(nested.status, 2);
+  assert.match(nested.stderr, /nested pi subagents/);
   assert.equal(existsSync(t.root), false, "nothing created under the root");
 
   writeFileSync(t.brief, "@secret.txt --flag first\n");
@@ -236,7 +272,7 @@ test("SIGTERM forwards to pi, releases the lock and reports aborted", async () =
   const t = setup();
   const child = spawn(process.execPath, [SCRIPT, "start", "--agent", "reviewer", "--task-file", t.brief], {
     cwd: t.work,
-    env: { ...process.env, ...t.env, FAKE_PI_MODE: "hang" },
+    env: childEnv({ ...t.env, FAKE_PI_MODE: "hang" }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";

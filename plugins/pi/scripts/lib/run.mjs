@@ -32,7 +32,6 @@ export async function runChild({ binary, args, cwd, lock, env = process.env }) {
   const collector = createCollector();
   let stderr = "";
   const child = spawn(binary, args, { cwd, env: { ...env, PI_SUBAGENT: "1" }, stdio: ["ignore", "pipe", "pipe"] });
-  if (child.pid) lock.update(child.pid);
   child.stdout.on("data", (chunk) => collector.push(chunk));
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
@@ -48,6 +47,13 @@ export async function runChild({ binary, args, cwd, lock, env = process.env }) {
   process.on("SIGTERM", terminate);
   process.on("SIGINT", terminate);
   try {
+    try {
+      if (child.pid) lock.update(child.pid);
+    } catch (error) {
+      // The lock must name the running pi; never leave pi running without it.
+      child.kill("SIGTERM");
+      throw error;
+    }
     const exit = await new Promise((resolve) => {
       child.once("error", (error) => {
         stderr += `${error.message}\n`;

@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { resolvePiPackageDir } from "../plugins/pi/scripts/lib/pi.mjs";
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const SCRIPT = join(REPO, "plugins", "pi", "scripts", "pi-subagent.mjs");
 export const FAKE_PI = join(REPO, "tests", "fixtures", "fake-pi.mjs");
+/** The real pi package: PI_SUBAGENT_PI points at the fake, whose location says nothing about the package. */
+export const PI_PACKAGE = resolvePiPackageDir(process.env);
 
 export function tempDir(prefix = "pi-plugin-test-") {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -23,12 +26,19 @@ export function writeAgent(
   return file;
 }
 
+/** The script's env: ours plus `env`, without an inherited PI_SUBAGENT (the suite may itself run inside pi). */
+export function childEnv(env = {}) {
+  const merged = { ...process.env, PI_SUBAGENT_PACKAGE: PI_PACKAGE, ...env };
+  if (!("PI_SUBAGENT" in env)) delete merged.PI_SUBAGENT;
+  return merged;
+}
+
 export function runScript(args, { cwd, env = {}, input } = {}) {
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd,
     input,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: childEnv(env),
   });
 }
 

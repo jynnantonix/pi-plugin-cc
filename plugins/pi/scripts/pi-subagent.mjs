@@ -16,6 +16,7 @@ import { renderHeader, renderJson } from "./lib/render.mjs";
 const MAX_BRIEF_BYTES = 100000;
 const BARE_MODEL = (source) =>
   `${source} must be <provider/id>; pi fuzzy-matches bare names, which defeats the mismatch check`;
+const SUFFIXED_MODEL = (source) => `${source} must be <provider/id> without a :thinking suffix; use --thinking`;
 const USAGE = `Usage:
   pi-subagent.mjs start  --agent <name> --task-file <path|-> [--cwd <dir>] [--model <provider/id>] [--thinking <level>] [--approve] [--json]
   pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json]`;
@@ -64,7 +65,16 @@ function readBrief(taskFile) {
   return text;
 }
 
+/** A model must be exactly <provider/id>: bare names and :thinking suffixes defeat the mismatch check. */
+function checkModel(model, source) {
+  if (!model.includes("/")) throw new UsageError(BARE_MODEL(source));
+  if (model.includes(":")) throw new UsageError(SUFFIXED_MODEL(source));
+}
+
 async function main(argv) {
+  if (process.env.PI_SUBAGENT === "1") {
+    throw new UsageError("nested pi subagents are not allowed: this process is already a pi subagent (PI_SUBAGENT=1)");
+  }
   const { verb, values } = parse(argv);
   const binary = resolvePiBinary();
   const task = readBrief(values["task-file"]);
@@ -89,12 +99,8 @@ async function main(argv) {
     agent = await loadAgent(values.agent, agentDir);
     cwd = resolve(values.cwd ?? process.cwd());
     if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new UsageError(`--cwd is not a directory: ${cwd}`);
-    if (values.model !== undefined && !values.model.includes("/")) {
-      throw new UsageError(BARE_MODEL("--model"));
-    }
-    if (values.model === undefined && agent.model !== undefined && !agent.model.includes("/")) {
-      throw new UsageError(BARE_MODEL(`${agent.filePath}: model`));
-    }
+    if (values.model !== undefined) checkModel(values.model, "--model");
+    else if (agent.model !== undefined) checkModel(agent.model, `${agent.filePath}: model`);
     model = values.model ?? agent.model;
     thinking = values.thinking;
     requestedModel = model ?? null;

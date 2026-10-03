@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { tempDir, writeAgent } from "./helpers.mjs";
 import { UsageError } from "../plugins/pi/scripts/lib/errors.mjs";
 import { resolvePiBinary, resolvePiPackageDir } from "../plugins/pi/scripts/lib/pi.mjs";
@@ -16,7 +16,13 @@ test("resolvePiBinary honours PI_SUBAGENT_PI and falls back to PATH", () => {
   assert.equal(resolvePiBinary({ PATH: dir }), fake);
   assert.throws(() => resolvePiBinary({ PATH: "/nonexistent" }), /pi not found on PATH/);
   assert.throws(() => resolvePiBinary({ PATH: dir, PI_SUBAGENT_PI: join(dir, "missing") }), /not executable/);
-  assert.match(resolvePiPackageDir(process.env), /pi-coding-agent$/);
+  const realPkg = resolvePiPackageDir(process.env);
+  assert.match(realPkg, /pi-coding-agent$/);
+  assert.equal(resolvePiPackageDir({ PATH: "/nonexistent", PI_SUBAGENT_PACKAGE: realPkg }), realPkg);
+  assert.throws(() => resolvePiPackageDir({ PATH: "/nonexistent", PI_SUBAGENT_PACKAGE: dir }), /no dist\/index.js/);
+  const dir2 = tempDir();
+  mkdirSync(join(dir2, "pi"));
+  assert.equal(resolvePiBinary({ PATH: `${dir2}:${dir}` }), fake, "a directory named pi is skipped");
 });
 
 test("loadAgent accepts scalar frontmatter and both tools spellings", async () => {

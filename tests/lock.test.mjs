@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tempDir } from "./helpers.mjs";
 import { UsageError } from "../plugins/pi/scripts/lib/errors.mjs";
@@ -18,7 +18,7 @@ test("acquire, busy, update and release", () => {
   assert.equal(readFileSync(lock.path, "utf8"), `${process.pid}\n`);
   assert.throws(
     () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid})`,
+    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid}; lock ${lockPath(dir)})`,
   );
   lock.update(4242);
   assert.equal(readFileSync(lock.path, "utf8"), "4242\n");
@@ -26,6 +26,10 @@ test("acquire, busy, update and release", () => {
   lock.release();
   assert.equal(existsSync(lock.path), false);
   lock.release(); // idempotent
+  writeFileSync(lock.path, "999999\n");
+  lock.release();
+  assert.equal(readFileSync(lock.path, "utf8"), "999999\n", "release does not delete a foreign lock");
+  unlinkSync(lock.path);
   acquireLock(dir).release();
 });
 
@@ -44,7 +48,7 @@ test("stale locks are reclaimed; in-flight or fresh unreadable locks are not", (
   writeFileSync(lockPath(dir), "");
   assert.throws(
     () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === "busy (lock contention)",
+    (e) => e instanceof UsageError && e.message === `busy (lock contention; ${lockPath(dir)})`,
   );
   const old = new Date(Date.now() - 60000);
   utimesSync(lockPath(dir), old, old);
@@ -66,7 +70,7 @@ test("a late reclaim re-judges under the mutex and never touches a live lock", (
   assert.deepEqual(readdirSync(dir), ["lock"], "mutex released, no private files left behind");
   assert.throws(
     () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid})`,
+    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid}; lock ${lockPath(dir)})`,
   );
   holder.release();
 });
@@ -77,7 +81,7 @@ test("a live reclaimer blocks reclaim; a dead reclaimer's mutex is itself reclai
   writeFileSync(reclaimMutexPath(dir), `${process.pid}\n`);
   assert.throws(
     () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === "busy (lock contention)",
+    (e) => e instanceof UsageError && e.message === `busy (lock contention; ${lockPath(dir)})`,
   );
   writeFileSync(reclaimMutexPath(dir), `${deadPid()}\n`);
   const lock = acquireLock(dir);
