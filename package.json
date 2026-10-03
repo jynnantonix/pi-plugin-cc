@@ -1,0 +1,19 @@
+{
+  "name": "pi-plugin-cc",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "syntax": "for f in plugins/pi/scripts/*.mjs plugins/pi/scripts/lib/*.mjs tests/*.mjs tests/fixtures/*.mjs; do node --check \"$f\" || exit 1; done",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run format:check && npm run syntax && npm test",
+    "setup:jj": "node scripts/setup-jj-format.mjs"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}
