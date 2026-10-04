@@ -1,168 +1,31 @@
-import { closeSync, linkSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { UsageError } from "./errors.mjs";
 
-/** Unparseable or empty lock content is treated as in-flight until it is this old. */
-const UNREADABLE_STALE_MS = 10000;
-
-export function lockPath(dir) {
-  return join(dir, "lock");
-}
-
-/** Short-lived mutex that serialises stale-lock reclaim; same create primitive as the lock itself. */
-export function reclaimMutexPath(dir) {
-  return join(dir, "lock.reclaim");
-}
-
-export function isAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+/** Exclusive creation only. A crash requires manual recovery; a dead launcher can leave a live child. */
+export function acquireLock(dir) {
+  const path = join(dir, "lock");
   try {
-    process.kill(pid, 0);
-    return true;
+    writeFileSync(path, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-
-function privateName(dir, tag) {
-  return join(dir, `.lock.${tag}.${process.pid}.${randomBytes(4).toString("hex")}`);
-}
-
-/** Write `<pid>\n` to a private file in dir and return its path; nothing is left behind on failure. */
-function writePrivate(dir, pid, tag) {
-  const temp = privateName(dir, tag);
-  const fd = openSync(temp, "wx", 0o600);
-  try {
-    writeFileSync(fd, `${pid}\n`);
-  } catch (error) {
-    try {
-      unlinkSync(temp);
-    } catch {
-      // nothing to clean
+    if (error.code === "EEXIST") {
+      throw new UsageError(
+        `locked: ${path}; after a crash, confirm the launcher and its pi child have stopped before manually removing this file`,
+      );
     }
     throw error;
-  } finally {
-    closeSync(fd);
   }
-  return temp;
-}
-
-/** Create the lock with its content already in place: link() fails atomically with EEXIST. */
-function tryCreate(dir, path, pid) {
-  const temp = writePrivate(dir, pid, "new");
-  try {
-    linkSync(temp, path);
-    return true;
-  } catch (error) {
-    if (error.code === "EEXIST") return false;
-    throw error;
-  } finally {
-    unlinkSync(temp);
-  }
-}
-
-/** The lock's owner as written and its age; null when the file is gone. */
-function inspect(path) {
-  try {
-    const content = readFileSync(path, "utf8");
-    const stat = statSync(path);
-    return { pid: Number.parseInt(content, 10), ageMs: Date.now() - stat.mtimeMs };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-function isStale(owner) {
-  if (Number.isInteger(owner.pid) && owner.pid > 0) return !isAlive(owner.pid);
-  return owner.ageMs > UNREADABLE_STALE_MS;
-}
-
-/**
- * Remove a stale lock under a short-lived mutex, so only one contender judges and removes it and
- * no live lock is ever moved or deleted: the mutex holder inspects `lock` again and unlinks it only
- * if it is still stale. A mutex left by a dead reclaimer is itself stale and is removed first.
- * Exported for the race tests; `acquireLock` is the only production caller.
- */
-export function reclaim(dir, path) {
-  const mutex = reclaimMutexPath(dir);
-  if (!tryCreate(dir, mutex, process.pid)) {
-    const holder = inspect(mutex);
-    if (holder && !isStale(holder)) throw new UsageError(`busy (lock contention; ${path})`);
-    try {
-      unlinkSync(mutex);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    if (!tryCreate(dir, mutex, process.pid)) throw new UsageError(`busy (lock contention; ${path})`);
-  }
-  try {
-    const owner = inspect(path);
-    if (owner && isStale(owner)) {
+  let released = false;
+  return {
+    release() {
+      if (released) return;
+      released = true;
       try {
         unlinkSync(path);
       } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+        if (error.code !== "ENOENT")
+          process.stderr.write(`pi-subagent: cannot remove lock ${path}: ${error.message}\n`);
       }
-    }
-  } finally {
-    try {
-      unlinkSync(mutex);
-    } catch {
-      // already gone
-    }
-  }
-}
-
-/**
- * One writer per conversation. The file holds the owning PID; a dead owner is stale and reclaimed.
- * The lock is per conversation directory, so independent conversations never contend.
- * Creation and update are atomic (link / rename), so a reader never sees an empty lock.
- */
-export function acquireLock(dir, pid = process.pid) {
-  const path = lockPath(dir);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (tryCreate(dir, path, pid)) {
-      let owner = pid; // the PID this holder last wrote; release() leaves any other owner's lock alone
-      return {
-        path,
-        update(newPid) {
-          const temp = writePrivate(dir, newPid, "update");
-          try {
-            renameSync(temp, path);
-          } catch (error) {
-            try {
-              unlinkSync(temp);
-            } catch {
-              // nothing to clean
-            }
-            throw error;
-          }
-          owner = newPid;
-        },
-        release() {
-          // Once our child dies, a contender may reclaim the lock and write its own PID before we get here:
-          // unlink only a lock that still names our owner. Never throws (it runs in `finally`): a lock left
-          // behind names a PID that dies with us, so the next acquirer reclaims it as stale.
-          try {
-            if (Number.parseInt(readFileSync(path, "utf8"), 10) === owner) unlinkSync(path);
-          } catch {
-            // already released (ENOENT), or left for stale reclaim
-          }
-        },
-      };
-    }
-    const owner = inspect(path);
-    if (!owner) continue; // vanished between create and inspect; try again
-    if (!isStale(owner)) {
-      throw new UsageError(
-        Number.isInteger(owner.pid) && owner.pid > 0
-          ? `busy (pid ${owner.pid}; lock ${path})`
-          : `busy (lock contention; ${path})`,
-      );
-    }
-    reclaim(dir, path);
-  }
-  throw new UsageError(`busy (lock contention; ${path})`);
+    },
+  };
 }

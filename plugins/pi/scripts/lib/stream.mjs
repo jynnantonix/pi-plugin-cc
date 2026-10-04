@@ -109,7 +109,7 @@ export function finalText(state) {
 }
 
 /**
- * Spec §4 exit code 0 conditions, with the reason precedence of spec §5: the most informative cause
+ * Successful completion requires a settled, error-free run. Report the most informative cause
  * first (what pi said), parser trouble last and appended to any earlier reason.
  */
 export function evaluate(state, { exitCode, stderr, signal }) {

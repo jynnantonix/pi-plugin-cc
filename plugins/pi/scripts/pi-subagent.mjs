@@ -13,7 +13,6 @@ import { buildArgs, runChild, writePrompt } from "./lib/run.mjs";
 import { evaluate, finalText } from "./lib/stream.mjs";
 import { renderHeader, renderJson } from "./lib/render.mjs";
 
-const MAX_BRIEF_BYTES = 100000;
 const BARE_MODEL = (source) =>
   `${source} must be <provider/id>; pi fuzzy-matches bare names, which defeats the mismatch check`;
 const SUFFIXED_MODEL = (source) => `${source} must be <provider/id> without a :thinking suffix; use --thinking`;
@@ -57,11 +56,6 @@ function readBrief(taskFile) {
     throw new UsageError(`cannot read task file ${taskFile}`);
   }
   if (!text.trim()) throw new UsageError("task file is empty");
-  if (Buffer.byteLength(text) > MAX_BRIEF_BYTES) {
-    throw new UsageError(
-      `task file exceeds ${MAX_BRIEF_BYTES} bytes; pi receives the brief as one argument. Keep long material in files and reference their paths from the brief`,
-    );
-  }
   return text;
 }
 
@@ -149,9 +143,8 @@ async function main(argv) {
       model: run === "new" ? model : undefined,
       thinking: run === "new" ? thinking : undefined,
       approve: values.approve,
-      task,
     });
-    outcome = await runChild({ binary, args, cwd, lock });
+    outcome = await runChild({ binary, args, cwd, task });
   } finally {
     lock.release();
     try {

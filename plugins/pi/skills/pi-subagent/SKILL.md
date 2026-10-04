@@ -66,17 +66,21 @@ the reason on stderr and no header. A refusal changes nothing on disk.
 
 ## Rules
 
-- One run per ID at a time. A second run on a busy ID is refused with `busy (pid N; lock <path>)`.
-  `N` is the pi process. After a cancel that killed this script with SIGKILL, pi may still be
-  finishing; the ID stays busy until it exits. If `N` is dead and the message persists, the PID was
-  reused; remove the named lock file by hand.
+- One run per ID at a time. An existing `lock` file refuses the run and names the path.
+  The file contains the launcher PID for diagnosis; it is never reclaimed automatically.
+  After a crash or SIGKILL, verify that both the launcher and any pi process using that
+  session file have stopped, then remove only the named lock file manually. A dead launcher
+  alone does not prove that its child stopped. Never remove a lock for an active run
+  or edit its session through pi's TUI.
 - Different IDs run in parallel freely. Start as many background runs as the work needs.
 - A pi child cannot start another subagent: the script refuses to run when `PI_SUBAGENT=1` is in
   its environment, which every child inherits.
 - A cancel (SIGTERM or SIGINT to the script) forwards SIGTERM to pi, SIGKILL after five seconds,
-  releases the lock and reports `error: aborted (SIGTERM)`. Whatever pi persisted stays resumable.
+  waits for pi to close, releases the lock and reports an aborted status. Whatever pi
+  persisted stays resumable. SIGKILL cannot run cleanup and leaves the lock for manual recovery.
 - Never pass `--agent`, `--cwd`, `--model` or `--thinking` to `resume`.
-- The brief is one argument to pi and is limited to 100000 bytes. Reference long material by path.
+- The brief is sent through pi's stdin, not its process arguments. There is no command-line
+  size cap; model context limits still apply. Reference long supporting material by path.
 - Conversations live under `<agent-dir>/claude-subagent-sessions/<id>/session.jsonl`. Open one in
   pi's own interface with `pi --session <that path>`, or export it with `pi --export <that path>`.
   A `start` whose pi never wrote a session file leaves no directory behind.

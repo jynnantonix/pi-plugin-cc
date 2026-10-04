@@ -1,91 +1,46 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { tempDir } from "./helpers.mjs";
 import { UsageError } from "../plugins/pi/scripts/lib/errors.mjs";
-import { acquireLock, isAlive, lockPath, reclaim, reclaimMutexPath } from "../plugins/pi/scripts/lib/lock.mjs";
+import { acquireLock } from "../plugins/pi/scripts/lib/lock.mjs";
 
-function deadPid() {
-  // A process that has already exited; its PID is not reused this quickly.
-  return spawnSync("true").pid;
-}
-
-test("acquire, busy, update and release", () => {
+test("one holder per conversation; release cannot remove a later holder's lock", () => {
   const dir = tempDir();
-  const lock = acquireLock(dir);
-  assert.equal(lock.path, lockPath(dir));
-  assert.equal(readFileSync(lock.path, "utf8"), `${process.pid}\n`);
-  assert.throws(
-    () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid}; lock ${lockPath(dir)})`,
-  );
-  lock.update(4242);
-  assert.equal(readFileSync(lock.path, "utf8"), "4242\n");
-  assert.deepEqual(readdirSync(dir), ["lock"], "update leaves no temp file");
-  lock.release();
-  assert.equal(existsSync(lock.path), false);
-  lock.release(); // idempotent
-  writeFileSync(lock.path, "999999\n");
-  lock.release();
-  assert.equal(readFileSync(lock.path, "utf8"), "999999\n", "release does not delete a foreign lock");
-  unlinkSync(lock.path);
-  acquireLock(dir).release();
+  const path = join(dir, "lock");
+  const first = acquireLock(dir);
+  assert.equal(readFileSync(path, "utf8"), `${process.pid}\n`);
+  assert.throws(() => acquireLock(dir), UsageError);
+  // Different conversations remain independent.
+  acquireLock(tempDir()).release();
+  first.release();
+  assert.equal(existsSync(path), false);
+  const second = acquireLock(dir);
+  first.release();
+  assert.equal(existsSync(path), true, "a second release must not unlink the next holder");
+  assert.throws(() => acquireLock(dir), UsageError);
+  second.release();
+  assert.deepEqual(readdirSync(dir), []);
 });
 
-test("stale locks are reclaimed; in-flight or fresh unreadable locks are not", () => {
-  const dir = tempDir();
-  const pid = deadPid();
-  assert.equal(isAlive(pid), false);
-  assert.equal(isAlive(process.pid), true);
-  writeFileSync(lockPath(dir), `${pid}\n`);
-  const lock = acquireLock(dir);
-  assert.equal(readFileSync(lock.path, "utf8"), `${process.pid}\n`);
-  lock.release();
-
-  // Empty or unparseable content is in flight until it is old: a creator between write and link,
-  // or a tampered file, must not be stolen.
-  writeFileSync(lockPath(dir), "");
-  assert.throws(
-    () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (lock contention; ${lockPath(dir)})`,
-  );
-  const old = new Date(Date.now() - 60000);
-  utimesSync(lockPath(dir), old, old);
-  acquireLock(dir).release();
-  writeFileSync(lockPath(dir), "garbage\n");
-  utimesSync(lockPath(dir), old, old);
-  acquireLock(dir).release();
-  assert.deepEqual(readdirSync(dir), [], "no private temp files left behind");
-});
-
-test("a late reclaim re-judges under the mutex and never touches a live lock", () => {
-  const dir = tempDir();
-  writeFileSync(lockPath(dir), `${deadPid()}\n`);
-  // A reclaims the stale lock and holds it.
-  const holder = acquireLock(dir);
-  // B judged the old lock stale earlier and only now reclaims: under the mutex it sees A's live lock and leaves it.
-  reclaim(dir, lockPath(dir));
-  assert.equal(readFileSync(holder.path, "utf8"), `${process.pid}\n`, "A's lock survived B's reclaim");
-  assert.deepEqual(readdirSync(dir), ["lock"], "mutex released, no private files left behind");
-  assert.throws(
-    () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (pid ${process.pid}; lock ${lockPath(dir)})`,
-  );
-  holder.release();
-});
-
-test("a live reclaimer blocks reclaim; a dead reclaimer's mutex is itself reclaimed", () => {
-  const dir = tempDir();
-  writeFileSync(lockPath(dir), `${deadPid()}\n`);
-  writeFileSync(reclaimMutexPath(dir), `${process.pid}\n`);
-  assert.throws(
-    () => acquireLock(dir),
-    (e) => e instanceof UsageError && e.message === `busy (lock contention; ${lockPath(dir)})`,
-  );
-  writeFileSync(reclaimMutexPath(dir), `${deadPid()}\n`);
-  const lock = acquireLock(dir);
-  assert.equal(readFileSync(lock.path, "utf8"), `${process.pid}\n`);
-  assert.deepEqual(readdirSync(dir), ["lock"]);
-  lock.release();
+test("existing locks always refuse, including dead owners and interrupted writes", () => {
+  const deadPid = spawnSync("true").pid;
+  for (const content of [`${deadPid}\n`, "", "garbage\n", `${process.pid}\n`]) {
+    const dir = tempDir();
+    const path = join(dir, "lock");
+    writeFileSync(path, content);
+    assert.throws(
+      () => acquireLock(dir),
+      (error) => {
+        assert.ok(error instanceof UsageError);
+        assert.ok(error.message.includes(path), "refusal identifies the lock to inspect");
+        assert.match(error.message, /manual|manually/);
+        return true;
+      },
+    );
+    assert.equal(readFileSync(path, "utf8"), content, "refusal must not change the lock");
+    assert.deepEqual(readdirSync(dir), ["lock"]);
+  }
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Stand-in for `pi --mode json -p`. Records argv, appends a plausible session file, replays a stream.
 // Knobs: FAKE_PI_ARGV (record path), FAKE_PI_FIXTURE (stream file), FAKE_PI_ANSWER_MODEL (provider/id),
-// FAKE_PI_EXIT, FAKE_PI_STDERR, FAKE_PI_MODE=hang, FAKE_PI_NO_SESSION=1.
+// FAKE_PI_EXIT, FAKE_PI_STDERR, FAKE_PI_MODE=hang|exit, FAKE_PI_NO_SESSION=1.
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { streamLines } from "../helpers.mjs";
 
@@ -10,7 +10,14 @@ const flag = (name) => {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] : undefined;
 };
-const record = { argv, cwd: process.cwd(), piSubagent: process.env.PI_SUBAGENT ?? null };
+if (process.env.FAKE_PI_MODE === "exit") {
+  process.stderr.write("early exit\n");
+  process.exit(3);
+}
+let task = "";
+process.stdin.setEncoding("utf8");
+for await (const chunk of process.stdin) task += chunk;
+const record = { argv, task, cwd: process.cwd(), piSubagent: process.env.PI_SUBAGENT ?? null };
 const promptFile = flag("--append-system-prompt");
 if (promptFile) record.prompt = readFileSync(promptFile, "utf8");
 if (process.env.FAKE_PI_ARGV) writeFileSync(process.env.FAKE_PI_ARGV, JSON.stringify(record));
@@ -37,7 +44,7 @@ if (process.env.FAKE_PI_MODE === "hang") {
   if (!process.env.FAKE_PI_NO_SESSION) {
     appendFileSync(
       sessionFile,
-      `${JSON.stringify({ type: "message", id: `u${Date.now()}`, parentId: "m1", timestamp: now, message: { role: "user", content: argv.at(-1), timestamp: Date.now() } })}\n`,
+      `${JSON.stringify({ type: "message", id: `u${Date.now()}`, parentId: "m1", timestamp: now, message: { role: "user", content: task, timestamp: Date.now() } })}\n`,
     );
   }
   const stream = process.env.FAKE_PI_FIXTURE

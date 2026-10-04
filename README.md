@@ -57,11 +57,15 @@ Pass when the second answer refers to the first, and pi's interface shows both t
 ```
 ~/.pi/agent/claude-subagent-sessions/<id>/
   session.jsonl   pi's native history
-  lock            present only while a run is active; holds the pi process ID
-  lock.reclaim    present only for the instant a stale lock is being removed
+  lock            exclusive run marker; holds the launcher process ID
 ```
 
 Conversations are never deleted automatically; the one exception is a `start` whose pi exited
-before writing any session file, whose empty directory is removed. A lock whose process is dead is
-reclaimed by the next run. Children run with `PI_SUBAGENT=1` and the script refuses to start when
-it sees that variable, so a pi child cannot start grandchildren.
+before writing any session file, whose empty directory is removed. Normal completion and
+SIGTERM/SIGINT release the lock after pi closes. A crash or SIGKILL can leave it behind; recovery
+is manual. Check that the launcher and any pi process using the session file have stopped before
+removing the named lock. A dead launcher alone is not sufficient.
+
+Briefs go through stdin, not process arguments, with no command-line length cap. Children run
+with `PI_SUBAGENT=1` and the script refuses to start when it sees that variable, so a pi child
+cannot start grandchildren through this plugin.

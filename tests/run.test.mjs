@@ -70,8 +70,8 @@ test("start launches pi with the spec's argv, persists a session and cleans up",
     "read,bash",
     "--model",
     "openai-codex/gpt-6-astra",
-    "Task: Review the change.\n",
   ]);
+  assert.equal(recorded.task, "Review the change.\n");
   assert.equal(recorded.prompt, "Review only.");
   assert.equal(recorded.cwd, t.work);
   assert.equal(recorded.piSubagent, "1");
@@ -85,14 +85,7 @@ test("start launches pi with the spec's argv, persists a session and cleans up",
   );
   assert.equal(tuned.status, 0, tuned.stderr);
   const tunedArgv = t.argv().argv;
-  assert.deepEqual(tunedArgv.slice(9), [
-    "--model",
-    "openai-codex/gpt-6-astra",
-    "--thinking",
-    "low",
-    "--approve",
-    "Task: Review the change.\n",
-  ]);
+  assert.deepEqual(tunedArgv.slice(9), ["--model", "openai-codex/gpt-6-astra", "--thinking", "low", "--approve"]);
 
   // A relative root resolves against this process's cwd, not pi's --cwd, so the session survives.
   const relative = runScript(["start", "--agent", "reviewer", "--task-file", t.brief, "--cwd", t.work], {
@@ -151,7 +144,8 @@ test("resume reuses the session, re-passes the role, and refuses overrides and u
   writeFileSync(join(t.root, id, "lock"), `${process.pid}\n`);
   const busy = runScript(["resume", "--id", id, "--task-file", t.brief], { cwd: t.base, env: t.env });
   assert.equal(busy.status, 2);
-  assert.match(busy.stderr, new RegExp(`busy \\(pid ${process.pid}; lock ${join(t.root, id, "lock")}\\)`));
+  assert.ok(busy.stderr.includes(join(t.root, id, "lock")));
+  assert.match(busy.stderr, /manual|manually/);
 
   unlinkSync(join(t.agentDir, "agents", "reviewer.md"));
   const roleless = runScript(["resume", "--id", id, "--task-file", t.brief], { cwd: t.base, env: t.env });
@@ -206,12 +200,6 @@ test("failures: non-zero exit keeps partial text, mismatch is reported, no-sessi
 
 test("refusals happen before any file is written", () => {
   const t = setup();
-  const big = join(t.base, "big.md");
-  writeFileSync(big, "x".repeat(100001));
-  const oversized = runScript(["start", "--agent", "reviewer", "--task-file", big], { cwd: t.work, env: t.env });
-  assert.equal(oversized.status, 2);
-  assert.match(oversized.stderr, /exceeds 100000 bytes/);
-
   const noPi = runScript(["start", "--agent", "reviewer", "--task-file", t.brief], {
     cwd: t.work,
     env: { ...t.env, PI_SUBAGENT_PI: "", PATH: "/nonexistent" },
@@ -265,7 +253,35 @@ test("refusals happen before any file is written", () => {
     input: "@secret.txt --flag first\n",
   });
   assert.equal(prefixed.status, 0, prefixed.stderr);
-  assert.equal(t.argv().argv.at(-1), "Task: @secret.txt --flag first\n");
+  assert.equal(t.argv().task, "@secret.txt --flag first\n");
+  assert.equal(
+    t.argv().argv.some((arg) => arg.includes("@secret.txt")),
+    false,
+  );
+});
+
+test("large briefs reach pi intact through stdin, not process arguments", () => {
+  const t = setup();
+  const task = "--flag @not-a-file\n" + "Review this.\n".repeat(20000);
+  writeFileSync(t.brief, task);
+  const result = runScript(["start", "--agent", "reviewer", "--task-file", t.brief], {
+    cwd: t.work,
+    env: t.env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(t.argv().task, task);
+  assert.equal(
+    t.argv().argv.some((arg) => arg.includes("Review this.")),
+    false,
+  );
+
+  const earlyExit = runScript(["start", "--agent", "reviewer", "--task-file", t.brief], {
+    cwd: t.work,
+    env: { ...t.env, FAKE_PI_MODE: "exit" },
+  });
+  assert.equal(earlyExit.status, 1, earlyExit.stderr);
+  assert.equal(t.header(earlyExit.stdout).status, "error: early exit");
+  assert.equal(earlyExit.stderr.includes("Unhandled"), false);
 });
 
 test("SIGTERM forwards to pi, releases the lock and reports aborted", async () => {
