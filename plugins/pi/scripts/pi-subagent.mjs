@@ -2,8 +2,8 @@
 // Start or resume a pi conversation and print a header plus the final assistant text.
 // Spec: docs/superpowers/specs/2026-10-03-pi-claude-plugin-design.md
 import { parseArgs } from "node:util";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { UsageError } from "./lib/errors.mjs";
 import { importPi, resolvePiBinary } from "./lib/pi.mjs";
 import { allocateId, loadAgent, parseId } from "./lib/agents.mjs";
@@ -11,14 +11,14 @@ import { acquireLock } from "./lib/lock.mjs";
 import { readSessionInfo } from "./lib/session.mjs";
 import { buildArgs, runChild, writePrompt } from "./lib/run.mjs";
 import { evaluate, finalText } from "./lib/stream.mjs";
-import { renderHeader, renderJson } from "./lib/render.mjs";
+import { renderHeader, renderJson, renderText } from "./lib/render.mjs";
 
 const BARE_MODEL = (source) =>
   `${source} must be <provider/id>; pi fuzzy-matches bare names, which defeats the mismatch check`;
 const SUFFIXED_MODEL = (source) => `${source} must be <provider/id> without a :thinking suffix; use --thinking`;
 const USAGE = `Usage:
-  pi-subagent.mjs start  --agent <name> --task-file <path|-> [--cwd <dir>] [--model <provider/id>] [--thinking <level>] [--approve] [--json]
-  pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json]`;
+  pi-subagent.mjs start  --agent <name> --task-file <path|-> [--cwd <dir>] [--model <provider/id>] [--thinking <level>] [--approve] [--json] [--report-file <path>]
+  pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json] [--report-file <path>]`;
 
 function parse(argv) {
   let parsed;
@@ -36,6 +36,7 @@ function parse(argv) {
         thinking: { type: "string" },
         approve: { type: "boolean", default: false },
         json: { type: "boolean", default: false },
+        "report-file": { type: "string" },
       },
     });
   } catch (error) {
@@ -72,6 +73,13 @@ async function main(argv) {
   const { verb, values } = parse(argv);
   const binary = resolvePiBinary();
   const task = readBrief(values["task-file"]);
+  if (values["report-file"] === "") throw new UsageError("--report-file must not be empty");
+  const reportFile = values["report-file"] === undefined ? null : resolve(values["report-file"]);
+  if (reportFile) {
+    const parent = dirname(reportFile);
+    if (!existsSync(parent) || !statSync(parent).isDirectory())
+      throw new UsageError(`--report-file parent directory does not exist: ${parent}`);
+  }
   const { getAgentDir } = await importPi();
   const agentDir = getAgentDir();
   // Absolute, so pi (spawned in --cwd) and this process name the same session file.
@@ -175,7 +183,19 @@ async function main(argv) {
     text: finalText(state),
     stderr: stderr.trim(),
   };
+  let writeError = null;
+  if (reportFile) {
+    try {
+      writeFileSync(reportFile, renderText(result));
+    } catch (error) {
+      writeError = error;
+    }
+  }
   process.stdout.write(values.json ? renderJson(result) : renderHeader(result));
+  if (writeError) {
+    process.stderr.write(`pi-subagent: cannot write report file ${reportFile}: ${writeError.message}\n`);
+    return 1;
+  }
   return verdict.ok ? 0 : 1;
 }
 

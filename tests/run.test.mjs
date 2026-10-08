@@ -317,3 +317,66 @@ test("SIGTERM forwards to pi, releases the lock and reports aborted", async () =
   assert.equal(JSON.parse(readFileSync(join(dir, "session.jsonl"), "utf8").split("\n")[0]).type, "session");
   assert.equal(t.header(stdout).status, "error: aborted (SIGTERM)");
 });
+
+test("--report-file writes the final text verbatim, refuses a missing parent, and reports write failures", () => {
+  const t = setup();
+  const report = join(t.base, "report.md");
+  const start = ["start", "--agent", "reviewer", "--task-file", t.brief, "--cwd", t.work];
+  const plain = runScript(start, { cwd: t.base, env: t.env });
+  const started = runScript([...start, "--report-file", report], { cwd: t.base, env: t.env });
+  assert.equal(started.status, 0, started.stderr);
+  assert.equal(readFileSync(report, "utf8"), "new ok\n");
+  const mask = (stdout) => stdout.replace(/^id: .*$/m, "id: -");
+  assert.equal(mask(started.stdout), mask(plain.stdout), "stdout is unchanged by the flag");
+
+  const id = t.header(started.stdout).id;
+  const resumed = runScript(["resume", "--id", id, "--task-file", t.brief, "--report-file", "report.md"], {
+    cwd: t.base,
+    env: t.env,
+  });
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(readFileSync(report, "utf8"), "resumed ok\n", "relative path resolves against cwd; file replaced");
+
+  const fixture = join(t.base, "partial.jsonl");
+  writeFileSync(fixture, streamLines({ text: "half a report", settled: false }));
+  const failed = runScript([...start, "--report-file", report], {
+    cwd: t.base,
+    env: { ...t.env, FAKE_PI_FIXTURE: fixture, FAKE_PI_EXIT: "3", FAKE_PI_STDERR: "Error: boom\n" },
+  });
+  assert.equal(failed.status, 1);
+  assert.match(t.header(failed.stdout).status, /^error:/);
+  assert.equal(readFileSync(report, "utf8"), "half a report\n");
+
+  const before = readdirSync(t.root);
+  const missing = join(t.base, "nope");
+  const refused = runScript([...start, "--report-file", join(missing, "r.md")], { cwd: t.base, env: t.env });
+  assert.equal(refused.status, 2);
+  assert.ok(refused.stderr.includes(missing), refused.stderr);
+  assert.deepEqual(readdirSync(t.root), before, "nothing allocated");
+  assert.equal(existsSync(missing), false);
+
+  const emptyArg = runScript([...start, "--report-file", ""], { cwd: t.base, env: t.env });
+  assert.equal(emptyArg.status, 2);
+  assert.deepEqual(readdirSync(t.root), before, "nothing allocated");
+
+  const jsonReport = join(t.base, "json.md");
+  const json = runScript([...start, "--json", "--report-file", jsonReport], { cwd: t.base, env: t.env });
+  assert.equal(json.status, 0, json.stderr);
+  assert.equal(JSON.parse(json.stdout).text, "new ok");
+  assert.equal(readFileSync(jsonReport, "utf8"), "new ok\n");
+
+  const emptyFixture = join(t.base, "empty.jsonl");
+  writeFileSync(emptyFixture, streamLines({ text: "" }));
+  const empty = runScript([...start, "--report-file", report], {
+    cwd: t.base,
+    env: { ...t.env, FAKE_PI_FIXTURE: emptyFixture },
+  });
+  assert.equal(empty.status, 0, empty.stderr);
+  assert.equal(readFileSync(report).length, 0, "empty text replaces the old report with zero bytes");
+
+  const unwritable = runScript([...start, "--report-file", t.work], { cwd: t.base, env: t.env });
+  assert.equal(unwritable.status, 1);
+  assert.equal(t.header(unwritable.stdout).status, "ok");
+  assert.ok(unwritable.stdout.endsWith("\n\nnew ok\n"));
+  assert.match(unwritable.stderr, /pi-subagent: cannot write report file .*work: /);
+});
