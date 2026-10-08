@@ -1,12 +1,12 @@
 {
   "name": "pi-plugin-cc",
   "owner": { "name": "Chirantan Ekbote" },
-  "metadata": { "description": "Run pi as a resumable subagent from Claude Code.", "version": "0.1.1" },
+  "metadata": { "description": "Run pi as a resumable subagent from Claude Code.", "version": "0.1.2" },
   "plugins": [
     {
       "name": "pi",
       "description": "Start and resume pi conversations from Claude Code.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./plugins/pi"
     }
   ]

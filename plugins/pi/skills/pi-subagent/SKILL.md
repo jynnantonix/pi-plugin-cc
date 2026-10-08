@@ -19,8 +19,8 @@ or `~/.pi/agent`. Frontmatter: `name` (equal to the file name), `description`, o
 Write the task to a file first. Then run one of:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" start --agent <name> --task-file <path> [--cwd <dir>] [--model <provider/id>] [--thinking <level>] [--approve]
-node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" resume --id <public-id> --task-file <path> [--approve]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" start --agent <name> --task-file <path> [--cwd <dir>] [--model <provider/id>] [--thinking <level>] [--approve] [--report-file <path>]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" resume --id <public-id> --task-file <path> [--approve] [--report-file <path>]
 ```
 
 - `start` creates a new conversation. The role's `model` is the default; `--model` and `--thinking`
@@ -28,10 +28,19 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/pi-subagent.mjs" resume --id <public-id> --t
   `pi --list-models` prints it and no `:thinking` suffix. A bare name or a suffix is refused, because
   pi would fuzzy-match it and the mismatch check below could not tell. Pi still matches a partial
   id by substring, so a partial id produces a `model-mismatch` line rather than a refusal.
-- `resume` continues a conversation. It takes the ID and a task file and nothing else. The session
-  restores model, thinking level and history; the role file supplies the prompt and tools again.
+- `resume` continues a conversation. It takes the ID and a task file, plus the optional `--approve`
+  and `--report-file`; it accepts no agent, cwd, model or thinking override. The session restores
+  model, thinking level and history; the role file supplies the prompt and tools again.
 - `--approve` grants pi project trust for this run only. Use it only on a checkout whose trust has
   not been saved.
+- `--report-file <path>` also writes the final assistant text verbatim to `<path>`, so a saved
+  review is the model's own output and not a transcription. Use it whenever the result must be
+  kept as a file, for example a review report a ledger names. Stdout is unchanged. The file
+  holds exactly the text that follows the header, newline-terminated, or nothing when there was
+  no text. It is written on every status, so after `status: error` it holds the partial text. An
+  existing file is replaced. The parent directory must exist: a missing one is refused before
+  pi starts. A write failure prints the usual stdout, then
+  `pi-subagent: cannot write report file <path>: <reason>` on stderr, and exits `1`.
 
 Run through the `Bash` tool with `run_in_background: true` by default. A review or implementation
 run can exceed the ten-minute foreground limit. Use the foreground only when the task is expected
@@ -59,6 +68,8 @@ usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 71% ctx 62k $0.42
   directory was used.
 - After every run, repeat `id`, `status`, `model` and `usage` to the user. Bash output is collapsed
   in their view.
+- With `--report-file`, the text after the header is also in that file. Point readers at the file
+  rather than copying the text by hand.
 
 Exit codes: `0` completed; `1` the run failed (header present when pi ran; an internal failure such
 as an unwritable temp directory exits `1` with only a stderr line); `2` refused before spawn, with

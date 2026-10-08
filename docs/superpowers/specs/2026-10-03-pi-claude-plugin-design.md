@@ -34,8 +34,9 @@ separate runtime npm dependencies or build step.
 ```text
 pi-subagent.mjs start --agent <name> --task-file <path|->
                      [--cwd <dir>] [--model <provider/id>] [--thinking <level>]
-                     [--approve] [--json]
+                     [--approve] [--json] [--report-file <path>]
 pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json]
+                     [--report-file <path>]
 ```
 
 - Agents are `<agent-dir>/agents/<name>.md`, where `<agent-dir>` is
@@ -57,6 +58,14 @@ pi-subagent.mjs resume --id <public-id> --task-file <path|-> [--approve] [--json
   A missing role file refuses the run.
 - `--approve` grants project trust for this launch only. Otherwise pi's saved
   trust decision applies. Non-interactive pi cannot prompt for project trust.
+- `--report-file <path>` writes the final assistant text to `<path>` as well,
+  exactly as it is printed after the header: newline-terminated unless empty.
+  It is written on every status, `ok` and `error`, replacing an existing file,
+  so the saved text is the model's own output rather than a controller
+  transcription. The parent directory must exist; a missing one is refused
+  before spawn. A failed write still prints the normal stdout, then reports
+  `cannot write report file` on stderr and exits `1`. Stdout and `--json` are
+  unchanged by the option.
 
 ## Identity and storage
 

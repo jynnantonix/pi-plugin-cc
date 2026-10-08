@@ -2,7 +2,7 @@
 
 Run pi as a resumable subagent from Claude Code. One Node script starts a pi conversation from an
 agent definition in `~/.pi/agent/agents`, resumes it by a stable public ID, and prints the model,
-usage and status with the final assistant text. The plugin provides the mechanism only; which
+usage and status with the final assistant text, and can write that text verbatim to a file. The plugin provides the mechanism only; which
 agent plays which role is decided by the skills that call it.
 
 Design: `docs/superpowers/specs/2026-10-03-pi-claude-plugin-design.md`. Derived from the subagent
@@ -46,11 +46,12 @@ This costs provider usage, so it is not automated. From a trusted checkout:
 printf 'Summarise this repository in three sentences.\n' > /tmp/brief.md
 node plugins/pi/scripts/pi-subagent.mjs start --agent reviewer --task-file /tmp/brief.md
 printf 'Now name the one file you would read first, and why.\n' > /tmp/brief.md
-node plugins/pi/scripts/pi-subagent.mjs resume --id <id from the first header> --task-file /tmp/brief.md
+node plugins/pi/scripts/pi-subagent.mjs resume --id <id from the first header> --task-file /tmp/brief.md --report-file /tmp/answer.md
 pi --session ~/.pi/agent/claude-subagent-sessions/<id>/session.jsonl
 ```
 
-Pass when the second answer refers to the first, and pi's interface shows both turns.
+Pass when the second answer refers to the first, `/tmp/answer.md` holds that answer, and pi's interface
+shows both turns.
 
 ## Storage
 
