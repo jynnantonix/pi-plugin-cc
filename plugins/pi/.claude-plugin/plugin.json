@@ -1,6 +1,6 @@
 {
   "name": "pi",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Start and resume pi conversations from Claude Code.",
   "author": { "name": "Chirantan Ekbote" }
 }
