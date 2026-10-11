@@ -66,8 +66,8 @@ usage: 7 turns ↑48k ↓3.4k R120k W2.1k cache 71% ctx 62k $0.42
   requested or restored model; stop and report it.
 - `cwd-note:` on a resume means the session's working directory differs from yours; the session's
   directory was used.
-- After every run, repeat `id`, `status`, `model` and `usage` to the user. Bash output is collapsed
-  in their view.
+- After every run, repeat `id`, `status` and `model` to the user. Bash output is collapsed in
+  their view.
 - With `--report-file`, the text after the header is also in that file. Point readers at the file
   rather than copying the text by hand.
 
